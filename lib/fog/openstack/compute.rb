@@ -6,6 +6,45 @@ module Fog
   module Compute
     class OpenStack < Fog::Service
 
+      def self.add_delegate kls
+        Real.add_delegate kls
+        Mock.add_delegate kls
+      end
+
+      module DelegateChain
+        module ClassMethods
+          def add_delegate kls
+            @delegates ||= []
+            @delegates << kls
+          end
+        end
+
+        private
+        def self.included cls
+          cls.send :extend, ClassMethods
+        end
+
+        def delegates
+          @initialized_delegates ||= {}
+          cdel = self.class.instance_variable_get(:@delegates)
+          cdel.each do |d|
+            unless @initialized_delegates[d]
+              inst = d.new(:parent => self)
+              @initialized_delegates[d] = inst
+            end
+          end
+          @initialized_delegates.values
+        end
+
+        def method_missing meth, *args, &blk
+          if ext = delegates.detect{|d| d.respond_to?(meth)}
+            ext.send(meth, *args, &blk)
+          else
+            super
+          end
+        end
+      end
+
       requires :openstack_api_key, :openstack_username, :openstack_auth_url
       recognizes :openstack_auth_token, :openstack_management_url, :persistent, :openstack_compute_service_name, :openstack_tenant
 
@@ -57,6 +96,8 @@ module Fog
 
       class Mock
 
+        include DelegateChain
+
         def self.data
           @data ||= Hash.new do |hash, key|
             hash[key] = {
@@ -102,6 +143,8 @@ module Fog
       end
 
       class Real
+
+        include DelegateChain
 
         def initialize(options={})
           require 'multi_json'
@@ -191,8 +234,32 @@ module Fog
           @port   = uri.port
           @scheme = uri.scheme
         end
-
       end
+
+      class DelegateService < Fog::Service
+        # A lite-service that reuses the parent's connection
+        # A cheap way to build extensions
+
+        def new(options)
+          rv = super(options)
+          class << rv
+            def request(*args, &blk)
+              options[:parent].request(*args, &blk)
+            end
+          end
+        end
+      end
+
+      class DelegateRequestClass
+        def initialize(options)
+          @parent = options[:parent]
+        end
+
+        def request *args, &blk
+          @parent.request *args, &blk
+        end
+      end
+
     end
   end
 end
