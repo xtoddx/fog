@@ -43,6 +43,10 @@ module Fog
             super
           end
         end
+
+        def respond_to? meth
+          super or delgates.detect{|d| d.respond_to?(meth)}
+        end
       end
 
       requires :openstack_api_key, :openstack_username, :openstack_auth_url
